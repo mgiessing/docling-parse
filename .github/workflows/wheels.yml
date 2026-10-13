@@ -368,6 +368,79 @@ jobs:
           name: python-package-distributions-py${{ matrix.python-version }}-${{ matrix.os.platform_id }}
           path: dist/
 
+  # ppc64le wheels are built only for releases: there are no GitHub-hosted ppc64le
+  # runners, so they are built on x86_64 under QEMU emulation, which is much slower
+  # than the native builds above. Switch `runs-on` to a native ppc64le runner label
+  # (and drop the QEMU step) once one is available to the org.
+  build_wheels_ppc64le:
+    name: Build wheel for py${{ matrix.python-version }} manylinux_ppc64le
+    if: inputs.publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv and set the python version
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Convert python version to cpXYZ
+        run: |
+          version=${{ matrix.python-version }}
+          cp_version="cp${version//.}"
+          echo "python_cp_version=$cp_version" >> $GITHUB_ENV
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: ppc64le
+
+      - name: Build wheels
+        env:
+          CIBW_BUILD: ${{ env.python_cp_version }}-manylinux_ppc64le
+          CIBW_ARCHS: ppc64le
+          CIBW_PLATFORM: linux
+          CIBW_SKIP: "pp* *musllinux_* *_i686* *_s390* *pypy*"
+          CIBW_PROJECT_REQUIRES_PYTHON: "~=${{ matrix.python-version }}.0"
+          CIBW_BUILD_VERBOSITY: 3
+          CIBW_ENVIRONMENT_PASS_LINUX: "BUILD_THREADS"
+          BUILD_THREADS: "4"
+        run: |
+          PY_CACHE_TAG=$(uv run python -c 'import sys;print(sys.implementation.cache_tag)')
+          echo "Building cp: ${{ env.python_cp_version }}"
+          echo "Building cache_tag: ${PY_CACHE_TAG}"
+          uv run python --version | grep ${{ matrix.python-version }}
+          uv pip install --group build
+          rm -rf ./build || true
+          python -m cibuildwheel --output-dir ./wheelhouse
+          ls -l ./wheelhouse
+          for file in ./wheelhouse/*.whl; do
+            echo "Inspecting $file"
+            uv run python -m zipfile --list "$file"
+            echo "Checking if .so is contained in the wheel"
+            uv run python -m zipfile --list "$file" | grep \\.so
+            echo "Checking if the correct python version is contained in the wheel"
+            uv run python -m zipfile --list "$file" | grep ${PY_CACHE_TAG}
+            echo "Checking that Blend2D debug assertions are not present"
+            uv run python scripts/check_no_blend2d_assertions.py "$file"
+          done
+          mkdir -p ./dist
+          cp wheelhouse/*.whl ./dist/
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-package-distributions-py${{ matrix.python-version }}-manylinux_ppc64le
+          path: dist/
+
   publish-packages:
     name: >-
       Publish Python 🐍 distribution 📦 to PyPI
@@ -375,6 +448,7 @@ jobs:
     needs:
       - build_sdist
       - build_wheels
+      - build_wheels_ppc64le
     runs-on: ubuntu-24.04
     environment:
       name: pypi

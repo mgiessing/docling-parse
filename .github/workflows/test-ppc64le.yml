@@ -1,0 +1,11 @@
+name: "TEMP: test ppc64le wheels"
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    uses: ./.github/workflows/wheels.yml
+    with:
+      publish: true
+    permissions:
+      id-token: write
+      contents: write
