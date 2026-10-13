@@ -1,6 +1,9 @@
 name: "TEMP: test ppc64le wheels"
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - test-ppc64le
 jobs:
   test:
     uses: ./.github/workflows/wheels.yml
